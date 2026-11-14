@@ -28,7 +28,7 @@ docker compose exec -T backend python -m scripts.seed_demo
 3. 选择同一调查期18条样线，共同m=100；非空样线最小N169，17条有效、1条空线单列。
 4. 设置bootstrap200次、seed20261114，把研究送入独立Celery队列。
 5. worker按不放回超几何期望计算共同m及共同范围曲线；按原始N组成计算Shannon/Simpson。
-6. 阅读SJ-01 E[S100]约12.433，条件区间约11.36–12.90；原N Shannon约1.926、Simpson约.769只做描述，不直接跨努力量排优。
+6. 阅读SJ-01 E[S100]约12.433，条件区间约11.31–12.95；原N Shannon约1.926、Simpson约.769只做描述，不直接跨努力量排优。
 7. 查看低计数物种与漏检边界，建立“林缘稀有种复查”建议，说明下一期保持协议。
 8. 顾芩以admin复核观察边界；季苔以viewer下载获批CSV。
 
@@ -46,7 +46,11 @@ docker compose exec -T backend python -m scripts.seed_demo
 
 `services/diversity.py`：p_i=n_i/N，Shannon H=−Σp_i ln(p_i)，使用自然对数；Simpson采用Gini–Simpson D=1−Σp_i²。两者均是**原始N下的plug-in描述指数**，不是共同m下的指数。结果页按样线编号排列，不按原始S、H、D排优。主横向对比字段是共同m的E[S_m]。
 
-`services/bootstrap.py`：固定seed和调查期/样线键派生确定性子种子，重复B次 Multinomial(N,观测p)；每次用原N重采样组成计算H/D，并在该组成上再算同一m的稀释期望，分别报告2.5%/97.5%分位区间。默认B200，允许50–1000。它是**条件于已观测组成的重采样区间**，不能覆盖未发现物种、空间相关、物种漏检或完整田野抽样不确定性；未见物种概率仍为零，区间不是生态总体置信保证。原N指数区间与共同m期望区间分别标注，稀释期望曲线也不是bootstrap轨迹。
+`services/bootstrap.py`：固定seed和调查期/样线键派生确定性子种子，重复B次 Multinomial(N,观测p)；每次用原N重采样组成计算H/D，并在该组成上再算同一m的稀释期望，分别报告2.5%/97.5%分位区间。默认B200，允许50–1000。第i次重复由`SeedSequence([seed,样线键,i])`独立派生，与分块、暂停、续算无关——同一研究的第i号样本在任何计算路径下逐项相同。它是**条件于已观测组成的重采样区间**，不能覆盖未发现物种、空间相关、物种漏检或完整田野抽样不确定性；未见物种概率仍为零，区间不是生态总体置信保证。原N指数区间与共同m期望区间分别标注，稀释期望曲线也不是bootstrap轨迹。
+
+## 可恢复重采样
+
+重采样常在限时内算不完。每次重复的H/D/E[Sₘ]按重复编号落入`run_samples(run_id,transect_id,replicate_index)`主键表，冲突跳过、不重复计入；研究行维护`epoch/completed_replicates/total_replicates`，列表与详情每3秒可见进度。`POST /runs/{id}/pause`在同一原子写里确认暂停并递增epoch：仍在执行的旧计算所有写入都带`epoch+status=running`守卫，确认后不再改进度或发布结果。`POST /runs/{id}/resume`原子认领新epoch并只让持最新epoch的一份推进，并发续算、队列残留任务与崩溃红elivery都被栅栏隔离；进程中断后已提交样本保留，续算从缺口编号继续。结果（含三组条件区间）只在全部样本完成后单次事务发布，完成前不出区间。参数改变必须另建研究：样本按run_id隔离，worker启动时校验输入指纹，不一致即失败而不混用旧样本。worker按`ANALYSIS_CHUNK_SIZE`分块提交、超过`ANALYSIS_CONTINUE_AFTER`秒自动以同epoch重新入队接续，软限时不再意味着从头重跑。
 
 输入指纹按样线reference稳定排序，包含调查期id/name/date/filename、样线id/期次/reference/name/habitat、全部24种计数（缺列规范为零）、共同m/重复数/seed/选择样线集合、算法版本；选择ID顺序和输入行序变化不改指纹，计数/元数据/seed改变会改。结果保存全部参数、原N/S、资格、期望曲线、三组条件区间、低计数1–2个体物种和指纹，worker写共享JSON并落库，可复算。
 
@@ -64,7 +68,7 @@ docker compose exec -T backend python -m scripts.seed_demo
 
 恰好frontend/backend/worker/db/redis五服务，全部健康探针/健康依赖；Nginx使用127.0.0.1探针，worker使用定向Celery ping。db-data/redis-data/artifacts命名卷分别保存数据库、队列与共享计算JSON。Nginx剥离/api/前缀，API不重复前缀。Kombu锁定5.4.2以兼容Celery5.4 Redis依赖。
 
-环境变量见.env.example：COMPOSE_PROJECT_NAME/FRONTEND_PORT/BACKEND_PORT/DB_PORT隔离项目与端口；POSTGRES_DB/USER/PASSWORD配置库；JWT_SECRET签名；SEED_DEMO控制自动数据。演示口令只用于本机，部署时替换环境变量。
+环境变量见.env.example：COMPOSE_PROJECT_NAME/FRONTEND_PORT/BACKEND_PORT/DB_PORT隔离项目与端口；POSTGRES_DB/USER/PASSWORD配置库；JWT_SECRET签名；SEED_DEMO控制自动数据。ANALYSIS_CHUNK_SIZE（默认25）控制每事务提交的重复数，ANALYSIS_CONTINUE_AFTER（默认150秒）控制worker自接续点，ANALYSIS_STEP_DELAY（默认0）为每次重复加节流便于演示暂停/续算。演示口令只用于本机，部署时替换环境变量。
 
 ```sh
 # 先配置本机可达 DATABASE_URL / REDIS_URL / JWT_SECRET
@@ -81,7 +85,17 @@ npm ci
 npm run dev
 ```
 
-目录：backend/src/{routes,controllers,services,models,schemas,middlewares,utils,constants,config}；backend/scripts/seed_demo.py；backend/migrations/；frontend/src/{api,stores,types,components/common,hooks,pages,router,utils,constants}。metadata首次建表，migrations记录结构，未配置生产增量迁移。seed按自然键插入，已有数据/用户修改不覆盖，基准运行仅缺失时计算。请求ID/全局错误两个中间件；AuditLog记录登录、录入、研究、建议复核；CSV对公式前缀转义。
+目录：backend/src/{routes,controllers,services,models,schemas,middlewares,utils,constants,config}；backend/scripts/seed_demo.py；backend/migrations/；backend/tests/；frontend/src/{api,stores,types,components/common,hooks,pages,router,utils,constants}。metadata首次建表，migrations记录结构（002为可恢复重采样补列与run_samples），未配置生产增量迁移。seed按自然键插入，已有数据/用户修改不覆盖，基准运行仅缺失时计算。请求ID/全局错误两个中间件；AuditLog记录登录、录入、研究、暂停/续算、建议复核；CSV对公式前缀转义。
+
+验证可恢复重采样（SQLite即可，无需docker）：
+
+```sh
+cd backend
+pip install -r requirements.txt pytest httpx
+python -m pytest tests/ -q
+```
+
+`tests/test_resumable.py`覆盖：worker路径与一次算完逐项相同；计算途中暂停后旧epoch写入被拒、进度冻结、续算结果一致且不重复计入；双重并发续算只推进一份；异常中断与SIGKILL杀进程后已提交样本保留、续算完成；参数改变另建研究不混用旧样本；完成前API不出区间；viewer暂停/续算403、终态409。
 
 共享枚举位置：backend/src/constants/enums.py的Role/RunStatus/NoteStatus/TransectStatus；frontend/src/constants/enums.ts对应角色/运行/建议/资格标签；使用于鉴权、服务/schema与Badge/Layout/页面。75个职责源文件，不计__init__及配置。全部测试脚本、真实截图、CSV、日志和报告仅位于批次根test-artifacts/gb-0014；TESTING.md列真实结果与已知差异。
 

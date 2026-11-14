@@ -6,6 +6,7 @@ class Role(StrEnum):
 class RunStatus(StrEnum):
  QUEUED='queued'
  RUNNING='running'
+ PAUSED='paused'
  SUCCEEDED='succeeded'
  FAILED='failed'
 class NoteStatus(StrEnum):

@@ -33,6 +33,9 @@ services:
       JWT_SECRET: ${JWT_SECRET:-local-demo-ecology-rarefy-change-for-deployment}
       SEED_DEMO: ${SEED_DEMO:-true}
       ARTIFACT_DIR: /artifacts
+      ANALYSIS_CHUNK_SIZE: ${ANALYSIS_CHUNK_SIZE:-25}
+      ANALYSIS_CONTINUE_AFTER: ${ANALYSIS_CONTINUE_AFTER:-150}
+      ANALYSIS_STEP_DELAY: ${ANALYSIS_STEP_DELAY:-0}
     ports: ["${BACKEND_PORT:-19218}:8000"]
     volumes: ["artifacts:/artifacts"]
     depends_on:
